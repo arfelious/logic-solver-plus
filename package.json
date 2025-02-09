@@ -1,0 +1,34 @@
+{
+  "name": "logic-solver-plus",
+  "version": "0.1.0",
+  "description": "A fork of logic-solver that is compiled to wasm instead of JS with additional features ",
+  "keywords": [
+    "solver",
+    "sat-solver",
+    "logic",
+    "constraint-solver",
+    "constraint-programming",
+    "logic-solver",
+    "minisat"
+  ],
+  "homepage": "https://github.com/arfelious/logic-solver-plus#readme",
+  "bugs": {
+    "url": "https://github.com/arfelious/logic-solver-plus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arfelious/logic-solver-plus.git"
+  },
+  "license": "MIT",
+  "author": "arfelious",
+  "exports": {
+    ".": {
+      "require": "./index.cjs",
+      "import": "./index.mjs",
+      "types": "./index.d.ts"
+    }
+  },
+  "scripts": {
+    "test": "node test.mjs && node test.cjs"
+  }
+}
