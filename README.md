@@ -7,6 +7,7 @@ Module supports both ESM and CJS style imports. You can choose to import or requ
 
 New `Logic.product` and `Logic.subtract` methods.
 
+Compiled with ALLOW_MEMORY_GROWTH to allow projects with relatively high amount of constraints to fully utilize methods like `Logic.product`
 
 Solver needs to be asynchronous initialized before using, this happened synchronously in the original version.
 

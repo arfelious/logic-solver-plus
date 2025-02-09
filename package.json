@@ -1,6 +1,6 @@
 {
   "name": "logic-solver-plus",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A fork of logic-solver that is compiled to wasm instead of JS with additional features ",
   "keywords": [
     "solver",
