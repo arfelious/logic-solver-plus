@@ -1,5 +1,5 @@
 # Logic Solver Plus
-Logic solver plus is a fork of logic-solver with additional features and type support. The project is under rapid development and the API for new features may change. You can safely assume anything not mentioned here is backwards compatible with the originial version.
+Logic solver plus is a fork of logic-solver with additional features and type support. The project is under rapid development and the API for new features may change. You can safely assume anything not mentioned here is backwards compatible with the original version.
 ### Key Differences
 Module supports both ESM and CJS style imports. You can choose to import or require it depending on your project.
 
