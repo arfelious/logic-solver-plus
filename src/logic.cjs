@@ -363,6 +363,10 @@ Logic.Solver = class Solver{
     _numClausesAddedToMiniSat = 0;
     _MiniSatConstructor = null;
     _unsat = false; // once true, no solution henceforth
+    _optionalFormulas=[]
+    _optionalFormulaStatuses=[]
+    _optionalFormulaWeights=[]
+    _optionalFormulaRatios=[]
     async initialize(){
         if (this.hasInitialized) {
           return;
@@ -371,6 +375,109 @@ Logic.Solver = class Solver{
         this.hasInitialized = true;
         await this._minisat.initialize();
       }
+    requireOptional(formulas,weights=1,options={checkIsValid:false,requiredRatio:0.9}){
+      if(!Array.isArray(formulas)){
+        formulas=[formulas]
+      }
+      if(!Array.isArray(weights)){
+        weights=[weights]
+      }
+      if(Array.isArray(formulas[0])){
+        let last
+        formulas.forEach((formula,i,a)=>{
+          let curr = this.requireOptional(formula,weights[i],options)
+          if(i==a.length-1)last=curr
+        })
+        return last
+      }
+      if (assert) assert(formulas, isArrayWhere(isFormulaOrTerm));
+      if(formulas.length!=weights){
+        if(weights.length!=1){
+          throw new Error("Formula array and weight array must be same length" +
+          "; they are " + formulas.length + " and " + weights.length);        
+        }
+        weights=Array(formulas.length).fill(weights[0])
+      }
+
+      let status
+      options.requiredRatio=options.requiredRatio??0.9
+      if(options.checkIsValid){
+        status = this.solveOptional({method:"greedy",requiredRatio:options.requiredRatio},[formulas,weights])
+      }else status = {isValid:false,ratio:0}
+      let index = this._optionalFormulas.push(formulas)-1
+      this._optionalFormulaWeights.push(weights)
+      this._optionalFormulaStatuses.push(status)
+      this._optionalFormulaRatios.push(options.requiredRatio)
+      return status
+    }
+    _getMaximumSatisfiable(formulas,weights,lastCondition,options,formulaIndex,isRecursive){
+      let totalSatisfied = 0
+      let nextLast = lastCondition
+      let combinedLast = Logic.and(lastCondition,...formulas)
+      if(this.solveAssuming(combinedLast)){
+        totalSatisfied+=weights.reduce((x,y)=>x+y,0)
+        nextLast=combinedLast
+      }else{
+        if(!isRecursive){
+          formulas=formulas.slice(0).map((e,i)=>[e,i]).sort((x,y)=>weights[y[1]]-weights[x[1]]).map(e=>e[0])
+          weights=weights.slice(0).sort((x,y)=>y-x)
+        }
+        let formulaAmount = formulas.length
+        if(formulaAmount>1){
+          let halfFormulaAmount = formulas.length/2
+          let formulasLeft = formulas.slice(0,halfFormulaAmount)
+          let weightsLeft = weights.slice(0,halfFormulaAmount)
+          let [leftSatisfiedNum,leftLast] = this._getMaximumSatisfiable(formulasLeft,weightsLeft,nextLast,options,formulaIndex,true)
+          totalSatisfied+=leftSatisfiedNum
+          nextLast=leftLast
+          let formulasRight = formulas.slice(halfFormulaAmount,formulaAmount)
+          let weightsRight = weights.slice(halfFormulaAmount,formulaAmount)
+          let [rightSatisfiedNum,rightLast] = this._getMaximumSatisfiable(formulasRight,weightsRight,nextLast,options,formulaIndex,true)
+          totalSatisfied+=rightSatisfiedNum
+          nextLast=rightLast
+        }
+      }
+      if(!isRecursive){
+        let ratio = totalSatisfied/(weights.reduce((x,y)=>x+y,0)||1)
+        let isValid = ratio>=options.requiredRatio
+        if(formulaIndex!=-1){
+          let statusObj = this._optionalFormulaStatuses[formulaIndex]
+          statusObj.isValid=isValid
+          statusObj.ratio=ratio
+        }else return {isValid,ratio}
+      }
+      return [totalSatisfied,nextLast]
+      
+    }
+    _solveOptional(options={method:"greedy"},requireeToBe){
+      if(typeof options!="object"){
+        throw new Error("Options argument must be an object.")
+      }
+      let method = options.method||"greedy"
+      options.requiredRatio=options.requiredRatio??0.9
+      if(method=="greedy"){
+        let last = Logic.TRUE
+        for(let i = 0;i<this._optionalFormulas.length;i++){
+          let formulas = this._optionalFormulas[i]
+          let weights = this._optionalFormulaWeights[i]
+          last=this._getMaximumSatisfiable(formulas,weights,last,options,i)[1]
+        }
+        if(Array.isArray(requireeToBe)){
+          let [formulas,weights] = requireeToBe
+          if (assert) assert(formulas, isArrayWhere(isFormulaOrTerm));
+          return this._getMaximumSatisfiable(formulas,weights,last,options,-1)
+        }
+        return this.solveAssuming(last)
+
+
+      }else{
+        throw new Error("Unknown method in options object.")
+      }
+
+    }
+    solveOptional(options){
+      return this._solveOptional(options)
+    }
     constructor(){
       this._termifier = new Logic.Termifier(this);
         // true and false
@@ -1072,9 +1179,9 @@ Logic._defineFormula(Logic.ExactlyOneFormula, 'exactlyOne', {
 // List of 0 or more formulas or terms, which together represent
 // a non-negative integer.  Least significant bit is first.  That is,
 // the kth array element has a place value of 2^k.
-Logic.Bits = function (formulaArray) {
-  if (assert) assert(formulaArray, isArrayWhere(isFormulaOrTerm));
-  this.bits = formulaArray; // public, immutable
+Logic.Bits = function (formulas) {
+  if (assert) assert(formulas, isArrayWhere(isFormulaOrTerm));
+  this.bits = formulas; // public, immutable
 };
 
 Logic.constantBits = function (wholeNumber) {
@@ -1474,7 +1581,7 @@ Logic.product = function (/*formulaOrBitsOrArray, ...*/) {
   }
   return result
 }
-//Will be modified as normally bits  unsigned
+//Will be modified as normally bits are unsigned
 Logic.subtract = function (minuend, subtrahend) {
   var things = Array.prototype.concat.apply([], [minuend, subtrahend]);
   if (assert) assert(things, isArrayWhere(isFormulaOrTermOrBits));

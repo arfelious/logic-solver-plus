@@ -65,48 +65,6 @@ extern "C" {
     int lastValidAssumption;
   };
   vec<Lit> assumps;
-  int lastValidIndex = -1;
-  int optionalClauseCount = 0;
-    EMSCRIPTEN_KEEPALIVE
-  void solveOptional(bool* hasSolution, int* lastValidAssumption) {
-      while (lastValidIndex >= -1) {
-          vec<Lit> tempAssumps;
-          for (int i = 0; i <= lastValidIndex; i++) {
-              tempAssumps.push(assumps[i]);
-          }
-
-          bool result = SOLVER->solve(tempAssumps);
-
-          if (result) {
-              *hasSolution = true; 
-              *lastValidAssumption = lastValidIndex;
-              return; 
-          } else {
-              lastValidIndex--;
-          }
-      }
-      *hasSolution = false;
-      *lastValidAssumption = -1;
-  }
-  bool addOptionalClause(int *terms){
-    if(lastValidIndex!=optionalClauseCount-1){
-      return false;
-    }
-    vec<Lit> vars;
-    while (*terms) {
-      int v = *terms;
-      bool isNot = false;
-      if (v < 0) {
-        v = -v;
-        isNot = true;
-      }
-      assumps.push(mkLit(Var(v), isNot));
-      terms++;
-    }
-    lastValidIndex++;
-    optionalClauseCount++;
-    return true;
-  }
   // Returns a pointer to a sequence of bytes representing
   // the solution values of the variables, starting with
   // variable 1 (that is, the first byte is variable 1,

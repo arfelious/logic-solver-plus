@@ -28,7 +28,7 @@ var readyPromise = new Promise((resolve, reject) => {
   readyPromiseResolve = resolve;
   readyPromiseReject = reject;
 });
-["cwrap","_memory","_createTheSolver","_ensureVar","_addClause","_solve","_solveOptional","_getSolution","_getNumVars","_solveAssuming","_retireVar","___indirect_function_table","_solve_string","_main","onRuntimeInitialized"].forEach((prop) => {
+["cwrap","_memory","_createTheSolver","_ensureVar","_addClause","_solve","_getSolution","_getNumVars","_solveAssuming","_retireVar","___indirect_function_table","_solve_string","_main","onRuntimeInitialized"].forEach((prop) => {
   if (!Object.getOwnPropertyDescriptor(readyPromise, prop)) {
     Object.defineProperty(readyPromise, prop, {
       get: () => abort('You are getting ' + prop + ' on the Promise object, instead of the instance. Use .then() to get called back with the instance, see the MODULARIZE docs in src/settings.js'),
@@ -4362,7 +4362,6 @@ var _createTheSolver = Module['_createTheSolver'] = createExportWrapper('createT
 var _ensureVar = Module['_ensureVar'] = createExportWrapper('ensureVar', 1);
 var _addClause = Module['_addClause'] = createExportWrapper('addClause', 1);
 var _solve = Module['_solve'] = createExportWrapper('solve', 0);
-var _solveOptional = Module['_solveOptional'] = createExportWrapper('solveOptional', 2);
 var _getSolution = Module['_getSolution'] = createExportWrapper('getSolution', 0);
 var _getNumVars = Module['_getNumVars'] = createExportWrapper('getNumVars', 0);
 var _solveAssuming = Module['_solveAssuming'] = createExportWrapper('solveAssuming', 1);

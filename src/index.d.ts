@@ -15,9 +15,11 @@ declare module 'logic-solver' {
       toNameTerm(term: Term): string
       toNumTerm(term: Term, noCreate?: boolean): number
       require(...args: Operands[]): void
+      requireOptional(formulas: Operand[] | Operand, weights: number[] | number, options?: {requiredRatio?: number}): {isValid: boolean, ratio: number}
       forbid(...args: Operands[]): void
       solve(): Solution | null
       solveAssuming(assumption: Operand): Solution | null
+      solveOptional(options?: {method?: "greedy"}): Solution | null
       minimizeWeightedSum(solution: Solution, formulas: Operand[], weights: number[] | number): Solution | null
       maximizeWeightedSum(solution: Solution, formulas: Operand[], weights: number[] | number): Solution | null
     }

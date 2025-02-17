@@ -1,12 +1,13 @@
 {
   "name": "logic-solver-plus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A fork of logic-solver that is compiled to wasm instead of JS with additional features ",
   "keywords": [
     "solver",
     "sat-solver",
     "logic",
     "constraint-solver",
+    "constraint-programming",
     "logic-solver",
     "minisat"
   ],
