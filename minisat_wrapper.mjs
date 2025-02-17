@@ -1,10 +1,10 @@
-const C_MINISAT = import('./mjs/minisat_static')
+import C_MINISAT from "./mjs/minisat_static";
 class MiniSat {
   _minisat
   hasInitialized = false
   async initialize(){
     if(!this.hasInitialized) {
-      this._minisat = await (await C_MINISAT).default()
+      this._minisat = await C_MINISAT()
       this.hasInitialized = true
       this._minisat.__createTheSolver= this._minisat.cwrap('createTheSolver', null, []); // void
       this._minisat.__ensureVar= this._minisat.cwrap('ensureVar', null, ['number']); // void ensureVar(int v)
