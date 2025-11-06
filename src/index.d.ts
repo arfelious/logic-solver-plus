@@ -1,4 +1,4 @@
-declare module 'logic-solver' {
+declare module 'logic-solver-plus' {
     type Term = number | string
     const FALSE: Term
     const TRUE: Term
@@ -22,6 +22,7 @@ declare module 'logic-solver' {
       solveOptional(options?: {method?: "greedy"}): Solution | null
       minimizeWeightedSum(solution: Solution, formulas: Operand[], weights: number[] | number): Solution | null
       maximizeWeightedSum(solution: Solution, formulas: Operand[], weights: number[] | number): Solution | null
+      initialize(): Promise<void>
     }
   
     interface Formula {}
