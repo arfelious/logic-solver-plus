@@ -25,7 +25,7 @@ declare module 'logic-solver-plus' {
     initialize(): Promise<void>
   }
 
-  declare const FormulaSymbol:unique symbol
+  const FormulaSymbol:unique symbol
   interface Formula {
     [FormulaSymbol]:true
   }
@@ -51,7 +51,7 @@ declare module 'logic-solver-plus' {
     ignoreUnknownVariables(): void
   }
 
-  declare const BitsSymbol:unique symbol
+  const BitsSymbol:unique symbol
   class Bits {
     constructor(formulas: Operand[])
     [BitsSymbol]:true
