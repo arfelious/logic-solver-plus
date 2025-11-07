@@ -25,7 +25,10 @@ declare module 'logic-solver-plus' {
     initialize(): Promise<void>
   }
 
-  interface Formula {}
+  const FormulaSymbol:unique symbol
+  interface Formula {
+    [FormulaSymbol]:true
+  }
   function isFormula(value: any): value is Formula
   function not(operand: Operand): Formula
   function or(...operands: Operands[]): Formula
@@ -48,8 +51,10 @@ declare module 'logic-solver-plus' {
     ignoreUnknownVariables(): void
   }
 
+  const BitsSymbol:unique symbol
   class Bits {
     constructor(formulas: Operand[])
+    [BitsSymbol]:true
   }
   function isBits(value: any): value is Bits
   function constantBits(wholeNumber: number): Bits
