@@ -65,6 +65,7 @@ Logic.isWholeNumber = withDescription('a whole number (integer >= 0)',
 Logic.isFormula = lazyInstanceofTester('a Formula', Logic, 'Formula');
 Logic.isClause = lazyInstanceofTester('a Clause', Logic, 'Clause');
 Logic.isBits = lazyInstanceofTester('a Bits', Logic, 'Bits');
+Logic.isTable = lazyInstanceofTester('a Table', Logic, 'Table');
 
 ///// UNDOCUMENTED TYPE TESTERS
 
@@ -110,6 +111,14 @@ Logic._isFormulaOrTermOrBits = withDescription('a Formula, Term, or Bits',
                                                    Logic.isTerm(x);
                                                });
 
+Logic._isFormulaOrTermOrBitsOrTable = withDescription('a Formula, Term, Bits, or Table',
+  function (x) {
+    return Logic.isFormula(x) ||
+      Logic.isBits(x) ||
+      Logic.isTerm(x) ||
+      Logic.isTable(x);
+  });
+
 // import the private testers from types.js
 var isInteger = Logic._isInteger;
 var isFunction = Logic._isFunction;
@@ -117,6 +126,7 @@ var isString = Logic._isString;
 var isArrayWhere = Logic._isArrayWhere;
 var isFormulaOrTerm = Logic._isFormulaOrTerm;
 var isFormulaOrTermOrBits = Logic._isFormulaOrTermOrBits;
+var isFormulaOrTermOrBitsOrTable = Logic._isFormulaOrTermOrBitsOrTable;
 
 Logic._assert = function (value, tester, description) {
   if (! tester(value)) {
@@ -169,21 +179,32 @@ Logic._disablingTypeChecks = Logic.disablingAssertions;
 // or NumTerm).
 Logic.not = function (operand) {
   if (assert) assert(operand, isFormulaOrTerm);
-
   if (operand instanceof Logic.Formula) {
     return new Logic.NotFormula(operand);
   } else {
     // Term
-    if (typeof operand === 'number') {
-      return -operand;
-    } else if (operand.charAt(0) === '-') {
-      return operand.slice(1);
+    if (typeof operand === 'string') {
+      var numMinuses = 0;
+      while (operand.charAt(numMinuses) === '-') {
+        numMinuses++;
+      }
+      var base = operand.slice(numMinuses);
+      if (base === Logic.NAME_TRUE) {
+        return (numMinuses % 2 === 0) ? Logic.NAME_FALSE : Logic.NAME_TRUE;
+      }
+      if (base === Logic.NAME_FALSE) {
+        return (numMinuses % 2 === 0) ? Logic.NAME_TRUE : Logic.NAME_FALSE;
+      }
+      return (numMinuses % 2 === 0) ? ('-' + base) : base;
     } else {
-      return '-' + operand;
+      if (operand === Logic.NUM_TRUE) return Logic.NUM_FALSE;
+      if (operand === Logic.NUM_FALSE) return Logic.NUM_TRUE;
+      if (operand === -Logic.NUM_TRUE) return Logic.NUM_TRUE;
+      if (operand === -Logic.NUM_FALSE) return Logic.NUM_FALSE;
+      return -operand;
     }
   }
 };
-
 Logic.NAME_FALSE = "$F";
 Logic.NAME_TRUE = "$T";
 Logic.NUM_FALSE = 1;
@@ -375,6 +396,31 @@ Logic.Solver = class Solver{
         this.hasInitialized = true;
         await this._minisat.initialize();
       }
+  async clone() {
+    const copy = new this.constructor();
+    if (this._MiniSatConstructor) {
+      copy._MiniSatConstructor = this._MiniSatConstructor;
+    }
+    await copy.initialize();
+
+    copy.clauses = this.clauses.slice();
+    copy._num2name = this._num2name.slice();
+    copy._name2num = Object.assign({}, this._name2num);
+    copy._formulaInfo = Object.assign({}, this._formulaInfo);
+    copy._nextFormulaNumByType = Object.assign({}, this._nextFormulaNumByType);
+    copy._ungeneratedFormulas = Object.assign({}, this._ungeneratedFormulas);
+    copy._F_used = this._F_used;
+    copy._T_used = this._T_used;
+    copy._unsat = this._unsat;
+    copy._numClausesAddedToMiniSat = 0;
+
+    copy._optionalFormulas = this._optionalFormulas.slice();
+    copy._optionalFormulaStatuses = this._optionalFormulaStatuses.slice();
+    copy._optionalFormulaWeights = this._optionalFormulaWeights.slice();
+    copy._optionalFormulaRatios = this._optionalFormulaRatios.slice();
+
+    return copy;
+  }
     requireOptional(formulas,weights=1,options={checkIsValid:false,requiredRatio:0.9}){
       if(!Array.isArray(formulas)){
         formulas=[formulas]
@@ -1218,60 +1264,228 @@ Logic.LessThanOrEqualFormula = function (bits1, bits2) {
 
 var genLTE = function (bits1, bits2, t, notEqual) {
   var ret = [];
-  // clone so we can mutate them in place
+  // Clone so we can mutate them in place
   var A = bits1.bits.slice();
   var B = bits2.bits.slice();
-  if (notEqual && ! bits2.bits.length) {
-    // can't be less than 0
-    return t.clause();
+  var TRUE = Logic.NAME_TRUE;
+  var FALSE = Logic.NAME_FALSE;
+
+  // Path-selection heuristic
+  // when A is a small (<=2-bit) all-constant value and B is all-variable ("const <= var"),
+  // skip the reductions below and use the old-style encoding. MiniSat's search is
+  // measurably faster on that shape unreduced, while the "var <= const" shape and
+  // "var <= var" benefit from the reductions.
+  var aAllConst = true;
+  var bAllConst = true;
+  for (var i0 = 0; i0 < A.length; i0++) {
+    if (A[i0] !== TRUE && A[i0] !== FALSE) { aAllConst = false; break; }
   }
-  // if A is longer than B, the extra (high) bits
-  // must be 0.
-  while (A.length > B.length) {
-    var hi = A.pop();
-    ret.push(t.clause(Logic.not(hi)));
+  for (var i1 = 0; i1 < B.length; i1++) {
+    if (B[i1] !== TRUE && B[i1] !== FALSE) { bAllConst = false; break; }
   }
-  // now B.length >= A.length
-  // Let xors[i] be (A[i] xor B[i]), or just
-  // B[i] if A is too short.
-  var xors = B.map(function (b, i) {
-    if (i < A.length) {
-      return Logic.xor(A[i], b);
-    } else {
-      return b;
+  var skipReductions = aAllConst && !bAllConst && A.length <= 2;
+
+  if (!skipReductions) {
+    // 1. Top-down (MSB) reduction loop
+    for (; ;) {
+      // Strip leading constant 0s from B
+      while (B.length > 0 && B[B.length - 1] === FALSE) {
+        B.pop();
+      }
+
+      // Cannot be strictly less than 0
+      if (notEqual && B.length === 0) {
+        return [t.clause()];
+      }
+
+      // If A is longer than B, the extra high bits of A must be 0
+      while (A.length > B.length) {
+        var hi = A.pop();
+        if (hi === TRUE) {
+          // Constant 1 in A above B's MSB makes A <= B impossible
+          return [t.clause()];
+        }
+        if (hi !== FALSE) {
+          ret.push(t.clause(Logic.not(hi)));
+        }
+      }
+
+      // Strip leading constant 0s from A
+      while (A.length > 0 && A[A.length - 1] === FALSE) {
+        A.pop();
+      }
+
+      // Inspect extra high bits of B above A's MSB (A is implicitly 0 here)
+      for (var j = B.length - 1; j >= A.length; j--) {
+        if (B[j] === TRUE) {
+          // Constant 1 in B above A's MSB guarantees A < B
+          return ret;
+        }
+        if (B[j] === FALSE) {
+          B.splice(j, 1);
+        }
+      }
+
+      // When A and B have the same length, check if the MSB can be reduced
+      if (A.length > 0 && A.length === B.length) {
+        var aTop = A[A.length - 1];
+        var bTop = B[B.length - 1];
+        if (aTop === bTop) {
+          // Identical MSBs never affect comparison; pop both and re-check new MSB
+          A.pop();
+          B.pop();
+          continue;
+        }
+        if (aTop === TRUE) {
+          // Since A's MSB is 1 and B has the same length, B's MSB must be 1 (because 0 is stripped)
+          ret.push(t.clause(bTop));
+          A.pop();
+          B.pop();
+          continue;
+        }
+        if (bTop !== TRUE && aTop === Logic.not(bTop)) {
+          // Complementary variables (x vs -x) at the MSB: A's MSB must be 0 (so B's is 1),
+          // which strictly satisfies A < B and makes all lower bits irrelevant.
+          ret.push(t.clause(bTop));
+          return ret;
+        }
+      }
+
+      break;
     }
-  });  
-
-  // Suppose we are comparing 3-bit numbers, requiring
-  // that ABC <= XYZ.  Here is what we require:
-  //
-  // * It is false that A=1 and X=0.
-  // * It is false that A=X, B=1, and Y=0.
-  // * It is false that A=X, B=Y, C=1, and Y=0.
-  //
-  // Translating these into clauses using DeMorgan's law:
-  //
-  // * A=0 or X=1
-  // * (A xor X) or B=0 or Y=1
-  // * (A xor X) or (B xor Y) or C=0 or Y=1
-  //
-  // Since our arguments are LSB first, in the example
-  // we would be given [C, B, A] and [Z, Y, X] as input.
-  // We iterate over the first argument starting from
-  // the right, and build up a clause by iterating over
-  // the xors from the right.
-  //
-  // If we have ABC <= VWXYZ, then we still have three clauses,
-  // but each one is prefixed with "V or W or", because V and W
-  // are at the end of the xors array.  This is equivalent to
-  // padding ABC with two zeros.
-
-  for (var i = A.length-1; i >= 0; i--) {
-    ret.push(t.clause(xors.slice(i+1), Logic.not(A[i]), B[i]));
+  } else {
+    // Old-style high-bit handling when the heuristic skips the reductions:
+    // extra (high) bits of A must be 0.
+    while (A.length > B.length) {
+      var hiOld = A.pop();
+      ret.push(t.clause(Logic.not(hiOld)));
+    }
+    if (notEqual && B.length === 0) {
+      return [t.clause()];
+    }
   }
+
+  if (!skipReductions) {
+    // 2. Scan from MSB to LSB to remove identical bits and resolve complementary pairs
+    for (var i = A.length - 1; i >= 0; i--) {
+      var a = A[i];
+      var b = B[i];
+
+      if (a === b) {
+        A.splice(i, 1);
+        B.splice(i, 1);
+      } else if (a === TRUE && b === FALSE) {
+        // A[i]=1 > B[i]=0 dominates all lower bits -> requires A_high < B_high
+        A = A.slice(i + 1);
+        B = B.slice(i + 1);
+        notEqual = true;
+        break;
+      } else if (a === FALSE && b === TRUE) {
+        // A[i]=0 < B[i]=1 dominates all lower bits -> requires A_high <= B_high
+        A = A.slice(i + 1);
+        B = B.slice(i + 1);
+        notEqual = false;
+        break;
+      } else if (i === A.length - 1 && a === FALSE) {
+        // Exposed leading 0 on A (when B is longer than A)
+        A.pop();
+      } else if (a !== TRUE && a !== FALSE && b !== TRUE && b !== FALSE && a === Logic.not(b)) {
+        // Complementary variables (x vs -x) can never be equal; lower bits are unreachable
+        A = A.slice(i);
+        B = B.slice(i);
+        notEqual = false;
+        break;
+      }
+    }
+  }
+
+  if (!skipReductions) {
+    // 3. Bottom-up (LSB) reduction loop for single-sided constants at bit 0
+    while (A.length > 0) {
+      var a0 = A[0];
+      var b0 = B[0];
+      if (!notEqual && (a0 === FALSE || b0 === TRUE)) {
+        // For A <= B, A[0]=0 or B[0]=1 is always satisfied at the LSB
+        A.shift();
+        B.shift();
+      } else if (notEqual && (a0 === TRUE || b0 === FALSE)) {
+        // For A < B, A[0]=1 or B[0]=0 can never satisfy strict inequality at the LSB
+        A.shift();
+        B.shift();
+      } else {
+        break;
+      }
+    }
+  }
+
+  // 4. Fast path when A is reduced to 0 (empty)
+  if (A.length === 0) {
+    if (notEqual) {
+      if (B.length === 0) {
+        return [t.clause()];
+      }
+      // 0 < B requires at least one remaining bit of B to be 1
+      ret.push(t.clause(B));
+    }
+    return ret;
+  }
+
+  // 5. Build xors for indices >= 1 (xors[0] is never needed)
+  //Note: Folding away the xor auxiliary variables makes
+  //MiniSat's search measurably slower on large workloads
+  //even though the folded formula is logically equivalent and slightly smaller.
+  var xors = B.map(function (bBit, idx) {
+    if (idx === 0) {
+      return null;
+    }
+    if (idx < A.length) {
+      return Logic.xor(A[idx], bBit);
+    }
+    return bBit;
+  });
+
+  // 6. Emit comparison clauses for bits above the LSB (k >= 1)
+  for (var k = A.length - 1; k >= 1; k--) {
+    var ak = A[k];
+    var bk = B[k];
+    // Skip tautological clauses where A[k] is "$F" or B[k] is "$T"
+    if (ak !== FALSE && bk !== TRUE) {
+      var high = xors.slice(k + 1);
+      if (ak === TRUE) {
+        // ~A[k] is "$F", so omit it from the clause
+        ret.push(t.clause(high, bk));
+      } else if (bk === FALSE) {
+        // B[k] is "$F", so omit it from the clause
+        ret.push(t.clause(high, Logic.not(ak)));
+      } else {
+        ret.push(t.clause(high, Logic.not(ak), bk));
+      }
+    }
+  }
+
+  // 7. Emit LSB (i = 0) clauses, folding strict inequality and constants directly
+  var highXors = xors.slice(1);
+  var aLSB = A[0];
+  var bLSB = B[0];
   if (notEqual) {
-    ret.push.apply(ret, t.generate(true, Logic.or(xors)));
+    // Note: Step 3 guarantees aLSB !== TRUE and bLSB !== FALSE when notEqual is true
+    if (aLSB !== FALSE) {
+      ret.push(t.clause(highXors, Logic.not(aLSB)));
+    }
+    if (bLSB !== TRUE) {
+      ret.push(t.clause(highXors, bLSB));
+    }
+  } else {
+    // Note: Step 3 guarantees aLSB !== FALSE and bLSB !== TRUE when notEqual is false
+    if (aLSB === TRUE) {
+      ret.push(t.clause(highXors, bLSB));
+    } else if (bLSB === FALSE || aLSB === Logic.not(bLSB)) {
+      ret.push(t.clause(highXors, Logic.not(aLSB)));
+    } else {
+      ret.push(t.clause(highXors, Logic.not(aLSB), bLSB));
+    }
   }
+
   return ret;
 };
 
@@ -1487,6 +1701,7 @@ var binaryWeightedSum = function (varsByWeight) {
 // first ensuring that it exists by pushing empty
 // arrays onto arrayOfArrays.
 var pushToNth = function (arrayOfArrays, n, newItem) {
+  if (assert) assert(n, Logic.isWholeNumber);
   while (n >= arrayOfArrays.length) {
     arrayOfArrays.push([]);
   }
@@ -1603,7 +1818,10 @@ Logic.subtract = function (minuend, subtrahend) {
   }
 
   if (binaryWeightedMinuend.length < binaryWeightedSubtrahend.length) {
-    return new Logic.Bits(Array(binaryWeightedSubtrahend.length).fill(Logic.FALSE));
+    // The minuend is narrower: zero-extend it
+    while (binaryWeightedMinuend.length < binaryWeightedSubtrahend.length) {
+      binaryWeightedMinuend.push(Logic.FALSE);
+    }
   }
 
   var output = [];
@@ -1624,6 +1842,146 @@ Logic.subtract = function (minuend, subtrahend) {
   return new Logic.Bits(output);
 };
 ////////////////////////////////////////
+
+var operandBits = function (operand) {
+  return operand instanceof Logic.Bits ? operand.bits : [operand];
+};
+
+var padBits = function (bits, n) {
+  bits = bits.slice();
+  while (bits.length < n) {
+    bits.push(Logic.FALSE);
+  }
+  return bits;
+};
+
+// Computes the absolute difference |minuend - subtrahend| as a Bits
+// circuit.  Each operand is treated as an unsigned integer (a formula/
+// term is a one-bit number), zero-padded so that both operands have the
+// same width.  The result has that many bits.
+Logic.absoluteDifference = function (minuend, subtrahend) {
+  if (assert) assertNumArgs(arguments.length, 2, "absoluteDifference");
+  if (assert) assert([minuend, subtrahend], isArrayWhere(isFormulaOrTermOrBits));
+
+  var aBits = operandBits(minuend);
+  var bBits = operandBits(subtrahend);
+  var n = Math.max(aBits.length, bBits.length);
+  var A = new Logic.Bits(padBits(aBits, n));
+  var B = new Logic.Bits(padBits(bBits, n));
+
+  // |A - B| is A - B when A >= B, and B - A when B > A.
+  var d = Logic.subtract(A, B).bits;
+  var e = Logic.subtract(B, A).bits;
+  var less = Logic.lessThan(A, B);
+
+  var output = [];
+  for (var i = 0; i < n; i++) {
+    output.push(Logic.or(Logic.and(less, e[i]), Logic.and(Logic.not(less), d[i])));
+  }
+  return new Logic.Bits(output);
+};
+
+////////////////////////////////////////
+
+// Requires that every operand is a different value from every other operand.
+// Operands are interpreted as integers (booleans are interpreted as 0/1). 
+// If fewer than two operands are supplied, the constraint is trivially satisfied.
+Logic.allDifferent = function (/*formulaOrBitsOrArray, ...*/) {
+  var things = Array.prototype.concat.apply([], arguments);
+  if (assert) assert(things, isArrayWhere(isFormulaOrTermOrBits));
+
+  var toBits = function (x) {
+    return x instanceof Logic.Bits ? x : new Logic.Bits([x]);
+  };
+
+  var constraints = [];
+  for (var i = 0; i < things.length; i++) {
+    for (var j = i + 1; j < things.length; j++) {
+      constraints.push(Logic.not(Logic.equalBits(toBits(things[i]), toBits(things[j]))));
+    }
+  }
+  return Logic.and(constraints);
+};
+
+////////////////////////////////////////
+
+Logic.Table = function (name, rows, cols) {
+  if (assert) assert(name, function (x) { return typeof x === 'string' && x.length > 0; });
+  if (assert) assert(rows, isArrayWhere(function (x) { return typeof x === 'string' || typeof x === 'number'; }));
+  if (assert) assert(cols, isArrayWhere(function (x) { return typeof x === 'string' || typeof x === 'number'; }));
+  if (assert) assertNumArgs(arguments.length, 3, "Logic.Table");
+
+  this.name = name;
+  this.rows = rows.slice();
+  this.cols = cols.slice();
+  this.constraints = [];
+
+  var numBits = Math.ceil(Math.log2(this.cols.length)) || 1;
+  this._bits = {};
+  this._cells = {};
+  this.cells = this._cells;
+
+  for (var i = 0; i < this.rows.length; i++) {
+    var r = this.rows[i];
+    this._cells[r] = {};
+
+    var rBits = Logic.variableBits(name + "_idx_" + r, numBits);
+    this._bits[r] = rBits;
+
+    if (this.cols.length < (1 << numBits)) {
+      this.constraints.push(Logic.lessThan(rBits, Logic.constantBits(this.cols.length)));
+    }
+
+    var rowCellVars = [];
+    for (var j = 0; j < this.cols.length; j++) {
+      var c = this.cols[j];
+      var cellVar = name + "_" + r + "_" + c;
+      this._cells[r][c] = cellVar;
+      rowCellVars.push(cellVar);
+
+      this.constraints.push(Logic.equiv(cellVar, Logic.equalBits(rBits, Logic.constantBits(j))));
+    }
+    this.constraints.push(Logic.exactlyOne(rowCellVars));
+  }
+};
+
+Logic.Table.prototype.get = function (row, col) {
+  return this._cells[row] && this._cells[row][col];
+};
+
+Logic.Table.prototype.indexOf = function (row) {
+  return this._bits[row];
+};
+
+Logic.Table.prototype.row = function (row) {
+  var self = this;
+  return this.cols.map(function (c) {
+    return self._cells[row][c];
+  });
+};
+
+Logic.Table.prototype.col = function (col) {
+  var self = this;
+  return this.rows.map(function (r) {
+    return self._cells[r][col];
+  });
+};
+
+Logic.Table.prototype.evaluate = function (solution) {
+  var result = {};
+  for (var i = 0; i < this.rows.length; i++) {
+    var r = this.rows[i];
+    var idx = solution.evaluate(this._bits[r]);
+    result[r] = this.cols[idx];
+  }
+  return result;
+};
+
+Logic.table = function (name, rows, cols) {
+  return new Logic.Table(name, rows, cols);
+};
+
+//////////////////////////////////
 
 Logic.Solver.prototype.solve = function (_assumpVar) {
   var self = this;
@@ -1692,6 +2050,21 @@ Logic.Solver.prototype.solveAssuming = function (formula) {
   this._minisat.retireVar(assumpVar);
 
   return result;
+};
+
+// Tests whether `formula` is true in every solution to the
+// currently required constraints by checking whether there
+// is a solution where the formula is NOT true and there is
+// a solution where the formula IS true. Returns true or false.
+Logic.Solver.prototype.isDefinite = function (formula) {
+  if (assert) assert(formula, isFormulaOrTerm);
+
+  if (this._unsat) {
+    return false;
+  }
+
+  return this.solveAssuming(Logic.not(formula)) === null &&
+    this.solveAssuming(formula) !== null;
 };
 
 Logic.Assumption = function (formula) {
@@ -1797,16 +2170,20 @@ Logic.Solution.prototype.getFormula = function () {
   return Logic.and(terms);
 };
 
-// Returns a boolean if the argument is a Formula (or Term), and an integer
-// if the argument is a Logic.Bits.
-Logic.Solution.prototype.evaluate = function (formulaOrBits) {
+// Returns a boolean if the argument is a Formula (or Term), an integer
+// if the argument is a Logic.Bits, or an object if the argument is a Logic.Table.
+Logic.Solution.prototype.evaluate = function (formulaOrBitsOrTable) {
   var self = this;
-  if (assert) assert(formulaOrBits, isFormulaOrTermOrBits);
+  if (assert) assert(formulaOrBitsOrTable, isFormulaOrTermOrBitsOrTable);
 
-  if (formulaOrBits instanceof Logic.Bits) {
+  if (formulaOrBitsOrTable instanceof Logic.Table) {
+    return formulaOrBitsOrTable.evaluate(self);
+  }
+
+  if (formulaOrBitsOrTable instanceof Logic.Bits) {
     // Evaluate to an integer
     var ret = 0;
-    formulaOrBits.bits.forEach(function (f, i) {
+    formulaOrBitsOrTable.bits.forEach(function (f, i) {
         if (self.evaluate(f)) {
           ret += 1 << i;
         }
@@ -1817,7 +2194,7 @@ Logic.Solution.prototype.evaluate = function (formulaOrBits) {
   var solver = self._solver;
   var ignoreUnknownVariables = self._ignoreUnknownVariables;
   var assignment = self._assignment;
-  var formula = formulaOrBits;
+  var formula = formulaOrBitsOrTable;
   if (formula instanceof Logic.NotFormula) {
     return ! self.evaluate(formula.operand);
   } else if (formula instanceof Logic.Formula) {
