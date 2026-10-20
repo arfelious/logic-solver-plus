@@ -1,10 +1,17 @@
-import C_MINISAT from "./mjs/minisat_static";
+import C_MINISAT from "./minisat_static";
 class MiniSat {
   _minisat
   hasInitialized = false
   async initialize(){
     if(!this.hasInitialized) {
-      this._minisat = await C_MINISAT()
+      this._minisat = await C_MINISAT({
+        locateFile: (path) => {
+          if (path.endsWith('.wasm')) {
+            return new URL('./minisat_static.wasm', import.meta.url).href;
+          }
+          return path;
+        }
+      })
       this.hasInitialized = true
       this._minisat.__createTheSolver= this._minisat.cwrap('createTheSolver', null, []); // void
       this._minisat.__ensureVar= this._minisat.cwrap('ensureVar', null, ['number']); // void ensureVar(int v)
